@@ -24,7 +24,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
-import { MoreHorizontal, Search, FileEdit, Trash2, UserPlus } from "lucide-react"
+import { MoreHorizontal, Search, FileEdit, Trash2, UserPlus, PenToolIcon as Tool, Shield } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { AlertCircle } from "lucide-react"
 import { useAuth } from "@/context/auth-context"
@@ -49,6 +49,7 @@ export default function UsersPage() {
     "Sales",
     "Operations",
     "Customer Support",
+    "Maintenance",
     "Other",
   ])
   const [newUser, setNewUser] = useState({
@@ -60,6 +61,7 @@ export default function UsersPage() {
     password: "",
     confirmPassword: "",
   })
+  const [roleFilter, setRoleFilter] = useState("All")
 
   useEffect(() => {
     const fetchUsers = async () => {
@@ -83,13 +85,19 @@ export default function UsersPage() {
     fetchUsers()
   }, [])
 
-  const filteredUsers = users.filter(
-    (user) =>
+  const filteredUsers = users.filter((user) => {
+    // First apply text search
+    const matchesSearch =
       user.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       user.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       user.role?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      user.department?.toLowerCase().includes(searchQuery.toLowerCase()),
-  )
+      user.department?.toLowerCase().includes(searchQuery.toLowerCase())
+
+    // Then apply role filter
+    const matchesRole = roleFilter === "All" || user.role === roleFilter
+
+    return matchesSearch && matchesRole
+  })
 
   const handleAddUser = async () => {
     setError("")
@@ -229,6 +237,27 @@ export default function UsersPage() {
     }
   }
 
+  const getRoleBadge = (role) => {
+    switch (role) {
+      case "Admin":
+        return (
+          <div className="flex items-center gap-1">
+            <Shield className="h-3.5 w-3.5 text-blue-500" />
+            <span>Admin</span>
+          </div>
+        )
+      case "Technician":
+        return (
+          <div className="flex items-center gap-1">
+            <Tool className="h-3.5 w-3.5 text-amber-500" />
+            <span>Technician</span>
+          </div>
+        )
+      default:
+        return <span>{role}</span>
+    }
+  }
+
   const getAuthErrorMessage = (errorCode) => {
     switch (errorCode) {
       case "auth/email-already-in-use":
@@ -301,6 +330,7 @@ export default function UsersPage() {
                   <SelectContent>
                     <SelectItem value="Admin">Admin</SelectItem>
                     <SelectItem value="Employee">Employee</SelectItem>
+                    <SelectItem value="Technician">Technician</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -377,13 +407,26 @@ export default function UsersPage() {
         </Dialog>
       </div>
       <div className="flex items-center gap-2">
-        <Search className="h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder="Search users..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="max-w-sm"
-        />
+        <div className="flex-1 flex items-center gap-2">
+          <Search className="h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search users..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="max-w-sm"
+          />
+        </div>
+        <Select value={roleFilter} onValueChange={setRoleFilter}>
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder="Filter by role" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="All">All Roles</SelectItem>
+            <SelectItem value="Admin">Admin</SelectItem>
+            <SelectItem value="Employee">Employee</SelectItem>
+            <SelectItem value="Technician">Technician</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
       <div className="rounded-md border">
         <Table>
@@ -422,7 +465,7 @@ export default function UsersPage() {
                 <TableRow key={user.id}>
                   <TableCell className="font-medium">{user.name}</TableCell>
                   <TableCell>{user.email}</TableCell>
-                  <TableCell>{user.role}</TableCell>
+                  <TableCell>{getRoleBadge(user.role)}</TableCell>
                   <TableCell>{user.department}</TableCell>
                   <TableCell>{getStatusBadge(user.status)}</TableCell>
                   <TableCell>{new Date(user.joinedDate).toLocaleDateString()}</TableCell>
@@ -522,6 +565,7 @@ export default function UsersPage() {
                   <SelectContent>
                     <SelectItem value="Admin">Admin</SelectItem>
                     <SelectItem value="Employee">Employee</SelectItem>
+                    <SelectItem value="Technician">Technician</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
