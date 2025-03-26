@@ -1,12 +1,15 @@
 "use client"
 
+import { Button } from "@/components/ui/button"
+
 import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Package, Users, Calendar, AlertTriangle, CheckCircle } from "lucide-react"
+import { Package, Users, Calendar, AlertTriangle, CheckCircle, BarChart, FileText } from "lucide-react"
 import { useAuth } from "@/context/auth-context"
 import { collection, getDocs, query, where, orderBy, limit } from "firebase/firestore"
 import { db } from "@/lib/firebase"
+import Link from "next/link"
 
 export default function AdminDashboard() {
   const { user } = useAuth()
@@ -148,8 +151,18 @@ export default function AdminDashboard() {
         <Tabs defaultValue="overview" className="space-y-4">
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="analytics">Analytics</TabsTrigger>
-            <TabsTrigger value="reports">Reports</TabsTrigger>
+            <TabsTrigger value="analytics">
+              <Link href="/admin/analytics" className="flex items-center gap-1">
+                <BarChart className="h-4 w-4" />
+                <span>Analytics</span>
+              </Link>
+            </TabsTrigger>
+            <TabsTrigger value="reports">
+              <Link href="/admin/reports" className="flex items-center gap-1">
+                <FileText className="h-4 w-4" />
+                <span>Reports</span>
+              </Link>
+            </TabsTrigger>
           </TabsList>
           <TabsContent value="overview" className="space-y-4">
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -276,10 +289,18 @@ export default function AdminDashboard() {
                 <CardDescription>Detailed analytics about your asset management system</CardDescription>
               </CardHeader>
               <CardContent>
-                <p className="text-sm text-muted-foreground">
-                  Analytics content would be displayed here with charts and graphs showing asset usage trends, booking
-                  patterns, and maintenance history.
-                </p>
+                <div className="flex flex-col items-center justify-center space-y-4 py-6">
+                  <BarChart className="h-16 w-16 text-primary opacity-80" />
+                  <div className="text-center">
+                    <h3 className="text-lg font-medium">Advanced Analytics</h3>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      View detailed analytics and insights about your assets, maintenance, and bookings.
+                    </p>
+                    <Link href="/admin/analytics">
+                      <Button className="mt-4">Go to Analytics Dashboard</Button>
+                    </Link>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
@@ -290,10 +311,18 @@ export default function AdminDashboard() {
                 <CardDescription>Generate and view reports about your assets and users</CardDescription>
               </CardHeader>
               <CardContent>
-                <p className="text-sm text-muted-foreground">
-                  Reports content would be displayed here with options to generate various reports such as asset
-                  utilization, maintenance history, and user activity.
-                </p>
+                <div className="flex flex-col items-center justify-center space-y-4 py-6">
+                  <FileText className="h-16 w-16 text-primary opacity-80" />
+                  <div className="text-center">
+                    <h3 className="text-lg font-medium">Comprehensive Reports</h3>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Generate detailed reports on assets, maintenance, bookings, and users.
+                    </p>
+                    <Link href="/admin/reports">
+                      <Button className="mt-4">Go to Reports</Button>
+                    </Link>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
