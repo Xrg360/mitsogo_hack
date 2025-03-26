@@ -99,7 +99,7 @@ export default function UsersPage() {
     return matchesSearch && matchesRole
   })
 
-  const handleAddUser = async () => {
+  const   handleAddUser = async () => {
     setError("")
 
     // Validate form

@@ -43,7 +43,6 @@ export default function MaintenancePage() {
   const [isLoading, setIsLoading] = useState(true)
   const [assets, setAssets] = useState([])
   const [users, setUsers] = useState({})
-  const [regularUsers, setRegularUsers] = useState([]) // Only regular users (not technicians)
   const [technicians, setTechnicians] = useState([])
   const [selectedTechnician, setSelectedTechnician] = useState("")
   const [newLog, setNewLog] = useState({
@@ -81,25 +80,12 @@ export default function MaintenancePage() {
         // Fetch users for displaying names
         const usersSnapshot = await getDocs(collection(db, "users"))
         const usersData = {}
-        const regularUsersData = []
-
         usersSnapshot.docs.forEach((doc) => {
-          const userData = doc.data()
-          usersData[doc.id] = userData
-
-          // Add to regular users if not a technician
-          if (userData.role !== "Technician") {
-            regularUsersData.push({
-              id: doc.id,
-              ...userData,
-            })
-          }
+          usersData[doc.id] = doc.data()
         })
-
         setUsers(usersData)
-        setRegularUsers(regularUsersData)
 
-        // Fetch technicians (users with role = Technician)
+        // Fetch technicians (users with isTechnician flag or role = Technician)
         const techniciansQuery = query(collection(db, "users"), where("role", "==", "Technician"))
         const techniciansSnapshot = await getDocs(techniciansQuery)
         const techniciansData = techniciansSnapshot.docs.map((doc) => ({
@@ -144,7 +130,7 @@ export default function MaintenancePage() {
       const docRef = await addDoc(collection(db, "maintenance"), {
         ...newLog,
         reportDate: new Date().toISOString(),
-        status: newLog.assignedTo ? "Assigned" : "Pending",
+        status: "Pending",
         createdBy: user.id,
       })
 
@@ -160,7 +146,7 @@ export default function MaintenancePage() {
         id: docRef.id,
         ...newLog,
         reportDate: new Date().toISOString(),
-        status: newLog.assignedTo ? "Assigned" : "Pending",
+        status: "Pending",
         createdBy: user.id,
       }
 
@@ -292,11 +278,6 @@ export default function MaintenancePage() {
     return users[userId]?.name || "Unknown User"
   }
 
-  const getUserRole = (userId) => {
-    if (!userId) return ""
-    return users[userId]?.role || ""
-  }
-
   const getStatusBadge = (status) => {
     switch (status) {
       case "Pending":
@@ -343,147 +324,136 @@ export default function MaintenancePage() {
     return technician.specializations
   }
 
-  // Check if current user can report maintenance issues
-  // Only regular users and admins can report issues, not technicians
-  const canReportIssues = user && user.role !== "Technician"
-
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight">Maintenance & Issues</h1>
         <div className="flex gap-2">
-          {user && user.role === "Admin" && (
-            <Link href="/register-technician">
-              <Button variant="outline">
-                <UserPlus className="mr-2 h-4 w-4" />
-                Register Technician
+          <Link href="/admin/register-technician">
+            <Button variant="outline">
+              <UserPlus className="mr-2 h-4 w-4" />
+              Register Technician
+            </Button>
+          </Link>
+          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="mr-2 h-4 w-4" />
+                Report Issue
               </Button>
-            </Link>
-          )}
-          {canReportIssues && (
-            <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-              <DialogTrigger asChild>
-                <Button>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Report Issue
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Report Maintenance Issue</DialogTitle>
-                  <DialogDescription>Enter the details of the maintenance issue below.</DialogDescription>
-                </DialogHeader>
-                <div className="grid gap-4 py-4">
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="assetId" className="text-right">
-                      Asset
-                    </Label>
-                    <Select value={newLog.assetId} onValueChange={handleAssetChange}>
-                      <SelectTrigger className="col-span-3">
-                        <SelectValue placeholder="Select an asset" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {assets.map((asset) => (
-                          <SelectItem key={asset.id} value={asset.id}>
-                            {asset.name} ({asset.type})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="reportedBy" className="text-right">
-                      Reported By
-                    </Label>
-                    <Select
-                      value={newLog.reportedBy}
-                      onValueChange={(value) => setNewLog({ ...newLog, reportedBy: value })}
-                    >
-                      <SelectTrigger className="col-span-3">
-                        <SelectValue placeholder="Select user" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {regularUsers.map((user) => (
-                          <SelectItem key={user.id} value={user.id}>
-                            {user.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="issue" className="text-right">
-                      Issue
-                    </Label>
-                    <Input
-                      id="issue"
-                      value={newLog.issue}
-                      onChange={(e) => setNewLog({ ...newLog, issue: e.target.value })}
-                      className="col-span-3"
-                    />
-                  </div>
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="priority" className="text-right">
-                      Priority
-                    </Label>
-                    <Select
-                      value={newLog.priority}
-                      onValueChange={(value) => setNewLog({ ...newLog, priority: value })}
-                    >
-                      <SelectTrigger className="col-span-3">
-                        <SelectValue placeholder="Select priority" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="High">High</SelectItem>
-                        <SelectItem value="Medium">Medium</SelectItem>
-                        <SelectItem value="Low">Low</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="assignedTo" className="text-right">
-                      Assign To
-                    </Label>
-                    <Select
-                      value={newLog.assignedTo}
-                      onValueChange={(value) => setNewLog({ ...newLog, assignedTo: value })}
-                    >
-                      <SelectTrigger className="col-span-3">
-                        <SelectValue placeholder="Select technician" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="">Unassigned</SelectItem>
-                        {technicians.map((tech) => (
-                          <SelectItem key={tech.id} value={tech.id}>
-                            {tech.name} ({tech.specializations?.join(", ") || "No specialization"})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="notes" className="text-right">
-                      Notes
-                    </Label>
-                    <Textarea
-                      id="notes"
-                      value={newLog.notes}
-                      onChange={(e) => setNewLog({ ...newLog, notes: e.target.value })}
-                      className="col-span-3"
-                    />
-                  </div>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Report Maintenance Issue</DialogTitle>
+                <DialogDescription>Enter the details of the maintenance issue below.</DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-4 py-4">
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="assetId" className="text-right">
+                    Asset
+                  </Label>
+                  <Select value={newLog.assetId} onValueChange={handleAssetChange}>
+                    <SelectTrigger className="col-span-3">
+                      <SelectValue placeholder="Select an asset" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {assets.map((asset) => (
+                        <SelectItem key={asset.id} value={asset.id}>
+                          {asset.name} ({asset.type})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button onClick={handleAddLog} disabled={!newLog.assetId || !newLog.issue || !newLog.reportedBy}>
-                    Submit
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          )}
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="reportedBy" className="text-right">
+                    Reported By
+                  </Label>
+                  <Select
+                    value={newLog.reportedBy}
+                    onValueChange={(value) => setNewLog({ ...newLog, reportedBy: value })}
+                  >
+                    <SelectTrigger className="col-span-3">
+                      <SelectValue placeholder="Select user" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(users).map(([id, userData]) => (
+                        <SelectItem key={id} value={id}>
+                          {userData.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="issue" className="text-right">
+                    Issue
+                  </Label>
+                  <Input
+                    id="issue"
+                    value={newLog.issue}
+                    onChange={(e) => setNewLog({ ...newLog, issue: e.target.value })}
+                    className="col-span-3"
+                  />
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="priority" className="text-right">
+                    Priority
+                  </Label>
+                  <Select value={newLog.priority} onValueChange={(value) => setNewLog({ ...newLog, priority: value })}>
+                    <SelectTrigger className="col-span-3">
+                      <SelectValue placeholder="Select priority" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="High">High</SelectItem>
+                      <SelectItem value="Medium">Medium</SelectItem>
+                      <SelectItem value="Low">Low</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="assignedTo" className="text-right">
+                    Assign To
+                  </Label>
+                  <Select
+                    value={newLog.assignedTo}
+                    onValueChange={(value) => setNewLog({ ...newLog, assignedTo: value })}
+                  >
+                    <SelectTrigger className="col-span-3">
+                      <SelectValue placeholder="Select technician" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="unassigned">Unassigned</SelectItem>
+                      {technicians.map((tech) => (
+                        <SelectItem key={tech.id} value={tech.id}>
+                          {tech.name} ({tech.specializations?.join(", ") || "No specialization"})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="notes" className="text-right">
+                    Notes
+                  </Label>
+                  <Textarea
+                    id="notes"
+                    value={newLog.notes}
+                    onChange={(e) => setNewLog({ ...newLog, notes: e.target.value })}
+                    className="col-span-3"
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleAddLog} disabled={!newLog.assetId || !newLog.issue || !newLog.reportedBy}>
+                  Submit
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
       <div className="flex items-center gap-2">
@@ -529,9 +499,7 @@ export default function MaintenancePage() {
                     <div className="text-sm text-muted-foreground">{log.assetType}</div>
                   </TableCell>
                   <TableCell>{log.issue}</TableCell>
-                  <TableCell>
-                    <div>{getUserName(log.reportedBy)}</div>
-                  </TableCell>
+                  <TableCell>{getUserName(log.reportedBy)}</TableCell>
                   <TableCell>{getStatusBadge(log.status)}</TableCell>
                   <TableCell>{getPriorityBadge(log.priority)}</TableCell>
                   <TableCell>
@@ -572,26 +540,22 @@ Resolution: ${log.resolution}`
                           View Details
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        {user && user.role === "Admin" && (
-                          <DropdownMenuItem onClick={() => openAssignDialog(log)}>
-                            <UserPlus className="mr-2 h-4 w-4" />
-                            Assign Technician
-                          </DropdownMenuItem>
-                        )}
-                        {log.status === "Pending" && user && user.role === "Admin" && (
+                        <DropdownMenuItem onClick={() => openAssignDialog(log)}>
+                          <UserPlus className="mr-2 h-4 w-4" />
+                          Assign Technician
+                        </DropdownMenuItem>
+                        {log.status === "Pending" && (
                           <DropdownMenuItem onClick={() => handleStartMaintenance(log.id)}>
                             <Tool className="mr-2 h-4 w-4" />
                             Start Maintenance
                           </DropdownMenuItem>
                         )}
-                        {(log.status === "Pending" || log.status === "In Progress" || log.status === "Assigned") &&
-                          user &&
-                          (user.role === "Admin" || user.id === log.assignedTo) && (
-                            <DropdownMenuItem onClick={() => openResolveDialog(log)}>
-                              <CheckCircle className="mr-2 h-4 w-4 text-green-500" />
-                              Mark as Resolved
-                            </DropdownMenuItem>
-                          )}
+                        {(log.status === "Pending" || log.status === "In Progress" || log.status === "Assigned") && (
+                          <DropdownMenuItem onClick={() => openResolveDialog(log)}>
+                            <CheckCircle className="mr-2 h-4 w-4 text-green-500" />
+                            Mark as Resolved
+                          </DropdownMenuItem>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
@@ -602,59 +566,55 @@ Resolution: ${log.resolution}`
         </Table>
       </div>
 
-      {/* Assign Technician Dialog - Only for Admins */}
-      {user && user.role === "Admin" && (
-        <Dialog open={isAssignDialogOpen} onOpenChange={setIsAssignDialogOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Assign Technician</DialogTitle>
-              <DialogDescription>Select a technician to assign to this maintenance task.</DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-4 py-4">
-              {currentLog && (
-                <>
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label className="text-right font-medium">Asset:</Label>
-                    <div className="col-span-3">{currentLog.assetName}</div>
-                  </div>
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label className="text-right font-medium">Issue:</Label>
-                    <div className="col-span-3">{currentLog.issue}</div>
-                  </div>
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="technician" className="text-right">
-                      Technician
-                    </Label>
-                    <Select value={selectedTechnician} onValueChange={setSelectedTechnician}>
-                      <SelectTrigger className="col-span-3">
-                        <SelectValue placeholder="Select a technician" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">Unassigned</SelectItem>
-                        {technicians.map((tech) => (
-                          <SelectItem key={tech.id} value={tech.id}>
-                            {tech.name} - {tech.specializations?.join(", ") || "No specialization"}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </>
-              )}
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setIsAssignDialogOpen(false)}>
-                Cancel
-              </Button>
-              <Button onClick={handleAssignTechnician} disabled={selectedTechnician === "none"}>
-                Assign Technician
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
+      {/* Assign Technician Dialog */}
+      <Dialog open={isAssignDialogOpen} onOpenChange={setIsAssignDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Assign Technician</DialogTitle>
+            <DialogDescription>Select a technician to assign to this maintenance task.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            {currentLog && (
+              <>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label className="text-right font-medium">Asset:</Label>
+                  <div className="col-span-3">{currentLog.assetName}</div>
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label className="text-right font-medium">Issue:</Label>
+                  <div className="col-span-3">{currentLog.issue}</div>
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="technician" className="text-right">
+                    Technician
+                  </Label>
+                  <Select value={selectedTechnician} onValueChange={setSelectedTechnician}>
+                    <SelectTrigger className="col-span-3">
+                      <SelectValue placeholder="Select a technician" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">Unassigned</SelectItem>
+                      {technicians.map((tech) => (
+                        <SelectItem key={tech.id} value={tech.id}>
+                          {tech.name} - {tech.specializations?.join(", ") || "No specialization"}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAssignDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleAssignTechnician}>Assign Technician</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      {/* Resolve Issue Dialog - For Admins and assigned Technicians */}
+      {/* Resolve Issue Dialog */}
       <Dialog open={isResolveDialogOpen} onOpenChange={setIsResolveDialogOpen}>
         <DialogContent>
           <DialogHeader>

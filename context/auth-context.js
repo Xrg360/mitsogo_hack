@@ -147,12 +147,10 @@ export function AuthProvider({ children }) {
 
       // Fetch fresh user data after login
       const userDoc = await getDoc(doc(db, "users", userCredential.user.uid))
-      let userData
-
       if (!userDoc.exists()) {
         console.log("User document doesn't exist, creating one")
         // Create user document if it doesn't exist
-        userData = {
+        await setDoc(doc(db, "users", userCredential.user.uid), {
           name: userCredential.user.displayName || email.split("@")[0],
           email: email,
           role: email.includes("admin") ? "admin" : "employee",
@@ -160,17 +158,7 @@ export function AuthProvider({ children }) {
           status: "Active",
           joinedDate: new Date().toISOString(),
           teams: [],
-        }
-        await setDoc(doc(db, "users", userCredential.user.uid), userData)
-      } else {
-        userData = userDoc.data()
-      }
-
-      // Redirect based on role
-      if (userData.role === "admin") {
-        router.push("/admin/dashboard")
-      } else {
-        router.push("/employee/dashboard")
+        })
       }
 
       return userCredential.user
@@ -209,4 +197,5 @@ export const useAuth = () => {
   }
   return context
 }
+
 
