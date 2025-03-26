@@ -329,7 +329,7 @@ export default function MaintenancePage() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight">Maintenance & Issues</h1>
         <div className="flex gap-2">
-          <Link href="/register-technician">
+          <Link href="/admin/register-technician">
             <Button variant="outline">
               <UserPlus className="mr-2 h-4 w-4" />
               Register Technician

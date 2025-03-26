@@ -604,7 +604,7 @@ export default function AssetsPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight">Assets Management</h1>
         <div className="flex gap-2">
-          <Link href="/register-team">
+          <Link href="/admin/register-team">
             <Button variant="outline">
               <UserPlus className="mr-2 h-4 w-4" />
               Register Team

@@ -7,7 +7,6 @@ const inter = Inter({ subsets: ["latin"] })
 export const metadata = {
   title: "Asset Management System",
   description: "Manage your organization's assets efficiently",
-    generator: 'v0.dev'
 }
 
 export default function RootLayout({ children }) {
