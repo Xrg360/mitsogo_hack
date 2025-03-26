@@ -23,48 +23,53 @@ export function AuthProvider({ children }) {
   // Check if user is authenticated on initial load
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        // Get additional user data from Firestore
-        try {
+      try {
+        if (firebaseUser) {
+          // Get additional user data from Firestore
           const userDoc = await getDoc(doc(db, "users", firebaseUser.uid))
+
           if (userDoc.exists()) {
             const userData = userDoc.data()
             setUser({
               id: firebaseUser.uid,
-              name: firebaseUser.displayName,
+              name: firebaseUser.displayName || userData.name,
               email: firebaseUser.email,
               role: userData.role || "employee",
-              department: userData.department,
+              department: userData.department || "",
               teams: userData.teams || [],
+              status: userData.status || "Active",
             })
+            console.log("User authenticated and data fetched:", userData)
           } else {
             // If user document doesn't exist, create it
-            await setDoc(doc(db, "users", firebaseUser.uid), {
-              name: firebaseUser.displayName,
+            const newUserData = {
+              name: firebaseUser.displayName || firebaseUser.email.split("@")[0],
               email: firebaseUser.email,
-              role: "employee",
+              role: firebaseUser.email.includes("admin") ? "admin" : "employee",
               department: "",
               status: "Active",
               joinedDate: new Date().toISOString(),
               teams: [],
-            })
+            }
+
+            await setDoc(doc(db, "users", firebaseUser.uid), newUserData)
+            console.log("Created new user document:", newUserData)
 
             setUser({
               id: firebaseUser.uid,
-              name: firebaseUser.displayName,
-              email: firebaseUser.email,
-              role: "employee",
-              department: "",
-              teams: [],
+              ...newUserData,
             })
           }
-        } catch (error) {
-          console.error("Error fetching user data:", error)
+        } else {
+          setUser(null)
+          console.log("No user authenticated")
         }
-      } else {
+      } catch (error) {
+        console.error("Error in authentication state change:", error)
         setUser(null)
+      } finally {
+        setLoading(false)
       }
-      setLoading(false)
     })
 
     return () => unsubscribe()
@@ -75,7 +80,7 @@ export function AuthProvider({ children }) {
     if (loading) return
 
     // Public routes that don't require authentication
-    const publicRoutes = ["/", "/login", "/register", "/forgot-password"]
+    const publicRoutes = ["/", "/login", "/register", "/forgot-password", "/admin-register"]
     const isPublicRoute = publicRoutes.some((route) => pathname === route)
 
     if (!user && !isPublicRoute) {
@@ -102,6 +107,7 @@ export function AuthProvider({ children }) {
 
   const register = async (name, email, password) => {
     try {
+      console.log("Attempting registration for:", email)
       const userCredential = await createUserWithEmailAndPassword(auth, email, password)
       const firebaseUser = userCredential.user
 
@@ -110,9 +116,10 @@ export function AuthProvider({ children }) {
 
       // Determine role based on email (admin emails contain "admin")
       const role = email.includes("admin") ? "admin" : "employee"
+      console.log("User role determined as:", role)
 
       // Create user document in Firestore
-      await setDoc(doc(db, "users", firebaseUser.uid), {
+      const userData = {
         name,
         email,
         role,
@@ -120,19 +127,55 @@ export function AuthProvider({ children }) {
         status: "Active",
         joinedDate: new Date().toISOString(),
         teams: [],
-      })
+      }
+
+      await setDoc(doc(db, "users", firebaseUser.uid), userData)
+      console.log("User document created successfully")
 
       return firebaseUser
     } catch (error) {
+      console.error("Registration failed:", error.code, error.message)
       throw error
     }
   }
 
   const login = async (email, password) => {
     try {
+      console.log("Attempting login for:", email)
       const userCredential = await signInWithEmailAndPassword(auth, email, password)
+      console.log("Login successful:", userCredential.user.uid)
+
+      // Fetch fresh user data after login
+      const userDoc = await getDoc(doc(db, "users", userCredential.user.uid))
+      let userData
+
+      if (!userDoc.exists()) {
+        console.log("User document doesn't exist, creating one")
+        // Create user document if it doesn't exist
+        userData = {
+          name: userCredential.user.displayName || email.split("@")[0],
+          email: email,
+          role: email.includes("admin") ? "admin" : "employee",
+          department: "",
+          status: "Active",
+          joinedDate: new Date().toISOString(),
+          teams: [],
+        }
+        await setDoc(doc(db, "users", userCredential.user.uid), userData)
+      } else {
+        userData = userDoc.data()
+      }
+
+      // Redirect based on role
+      if (userData.role === "admin") {
+        router.push("/admin/dashboard")
+      } else {
+        router.push("/employee/dashboard")
+      }
+
       return userCredential.user
     } catch (error) {
+      console.error("Login failed:", error.code, error.message)
       throw error
     }
   }

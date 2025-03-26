@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -15,105 +15,170 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Search, MoreHorizontal, CheckCircle, XCircle, AlertCircle } from "lucide-react"
-
-// Mock data for bookings
-const initialBookings = [
-  {
-    id: "booking-1",
-    assetName: "Dell XPS 15",
-    assetType: "Laptop",
-    requestedBy: "Sarah Johnson",
-    department: "Marketing",
-    requestDate: "2023-03-15",
-    startDate: "2023-03-20",
-    endDate: "2023-04-20",
-    status: "Pending",
-    priority: "High",
-    purpose: "Marketing campaign project",
-  },
-  {
-    id: "booking-2",
-    assetName: "Conference Room A",
-    assetType: "Room",
-    requestedBy: "Michael Chen",
-    department: "Finance",
-    requestDate: "2023-03-14",
-    startDate: "2023-03-16",
-    endDate: "2023-03-16",
-    status: "Approved",
-    priority: "Medium",
-    purpose: "Quarterly budget meeting",
-  },
-  {
-    id: "booking-3",
-    assetName: "Projector P3000",
-    assetType: "Projector",
-    requestedBy: "Emily Rodriguez",
-    department: "HR",
-    requestDate: "2023-03-10",
-    startDate: "2023-03-25",
-    endDate: "2023-03-25",
-    status: "Rejected",
-    priority: "Low",
-    purpose: "Training session",
-    rejectionReason: "Asset under maintenance",
-  },
-  {
-    id: "booking-4",
-    assetName: "iPad Pro 12.9",
-    assetType: "Tablet",
-    requestedBy: "David Kim",
-    department: "Sales",
-    requestDate: "2023-03-12",
-    startDate: "2023-03-18",
-    endDate: "2023-04-18",
-    status: "Approved",
-    priority: "High",
-    purpose: "Client presentations",
-  },
-  {
-    id: "booking-5",
-    assetName: "Conference Room B",
-    assetType: "Room",
-    requestedBy: "Sarah Johnson",
-    department: "Marketing",
-    requestDate: "2023-03-13",
-    startDate: "2023-03-17",
-    endDate: "2023-03-17",
-    status: "Pending",
-    priority: "Medium",
-    purpose: "Team brainstorming session",
-  },
-]
+import { useAuth } from "@/context/auth-context"
+import { collection, query, getDocs, doc, updateDoc, getDoc, orderBy } from "firebase/firestore"
+import { db } from "@/lib/firebase"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Textarea } from "@/components/ui/textarea"
 
 export default function BookingsPage() {
-  const [bookings, setBookings] = useState(initialBookings)
+  const { user } = useAuth()
+  const [bookings, setBookings] = useState([])
   const [searchQuery, setSearchQuery] = useState("")
   const [activeTab, setActiveTab] = useState("all")
+  const [isLoading, setIsLoading] = useState(true)
+  const [isRejectDialogOpen, setIsRejectDialogOpen] = useState(false)
+  const [currentBooking, setCurrentBooking] = useState(null)
+  const [rejectionReason, setRejectionReason] = useState("")
+  const [users, setUsers] = useState({})
+  const [teams, setTeams] = useState({})
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        // Fetch all bookings
+        const bookingsQuery = query(collection(db, "bookings"), orderBy("requestDate", "desc"))
+        const bookingsSnapshot = await getDocs(bookingsQuery)
+        const bookingsData = bookingsSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }))
+        setBookings(bookingsData)
+
+        // Fetch users for displaying names
+        const usersSnapshot = await getDocs(collection(db, "users"))
+        const usersData = {}
+        usersSnapshot.docs.forEach((doc) => {
+          usersData[doc.id] = doc.data()
+        })
+        setUsers(usersData)
+
+        // Fetch teams for displaying names
+        const teamsSnapshot = await getDocs(collection(db, "teams"))
+        const teamsData = {}
+        teamsSnapshot.docs.forEach((doc) => {
+          teamsData[doc.id] = doc.data()
+        })
+        setTeams(teamsData)
+      } catch (error) {
+        console.error("Error fetching bookings:", error)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchData()
+  }, [])
 
   const filteredBookings = bookings.filter((booking) => {
     // Filter by search query
     const matchesSearch =
-      booking.assetName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      booking.requestedBy.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      booking.department.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      booking.purpose.toLowerCase().includes(searchQuery.toLowerCase())
+      booking.assetName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      getUserName(booking.requestedBy)?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      getTeamName(booking.requestedByTeam)?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      booking.purpose?.toLowerCase().includes(searchQuery.toLowerCase())
 
     // Filter by tab
     if (activeTab === "all") return matchesSearch
     return matchesSearch && booking.status.toLowerCase() === activeTab.toLowerCase()
   })
 
-  const handleApproveBooking = (id) => {
-    setBookings(bookings.map((booking) => (booking.id === id ? { ...booking, status: "Approved" } : booking)))
+  const handleApproveBooking = async (id) => {
+    try {
+      const bookingRef = doc(db, "bookings", id)
+
+      // Get the booking details
+      const bookingDoc = await getDoc(bookingRef)
+      if (!bookingDoc.exists()) {
+        throw new Error("Booking not found")
+      }
+
+      const bookingData = bookingDoc.data()
+
+      // Update the booking status
+      await updateDoc(bookingRef, {
+        status: "Approved",
+        updatedAt: new Date().toISOString(),
+        approvedBy: user.id,
+        approvedAt: new Date().toISOString(),
+      })
+
+      // Update the asset status if it exists
+      if (bookingData.assetId) {
+        const assetRef = doc(db, "assets", bookingData.assetId)
+        const assetDoc = await getDoc(assetRef)
+
+        if (assetDoc.exists()) {
+          // Only update if the asset is available
+          if (assetDoc.data().status === "Available") {
+            await updateDoc(assetRef, {
+              status: "In Use",
+              assignedTo: bookingData.requestedBy,
+              assignedToTeam: bookingData.requestedByTeam || null,
+              assignedDate: new Date().toISOString(),
+              dueDate: bookingData.endDate,
+            })
+          }
+        }
+      }
+
+      // Update local state
+      setBookings(bookings.map((booking) => (booking.id === id ? { ...booking, status: "Approved" } : booking)))
+    } catch (error) {
+      console.error("Error approving booking:", error)
+      alert("Failed to approve booking. Please try again.")
+    }
   }
 
-  const handleRejectBooking = (id) => {
-    setBookings(
-      bookings.map((booking) =>
-        booking.id === id ? { ...booking, status: "Rejected", rejectionReason: "Request denied by admin" } : booking,
-      ),
-    )
+  const openRejectDialog = (booking) => {
+    setCurrentBooking(booking)
+    setRejectionReason("")
+    setIsRejectDialogOpen(true)
+  }
+
+  const handleRejectBooking = async () => {
+    if (!currentBooking) return
+
+    try {
+      await updateDoc(doc(db, "bookings", currentBooking.id), {
+        status: "Rejected",
+        rejectionReason,
+        updatedAt: new Date().toISOString(),
+        rejectedBy: user.id,
+        rejectedAt: new Date().toISOString(),
+      })
+
+      // Update local state
+      setBookings(
+        bookings.map((booking) =>
+          booking.id === currentBooking.id ? { ...booking, status: "Rejected", rejectionReason } : booking,
+        ),
+      )
+
+      setIsRejectDialogOpen(false)
+      setCurrentBooking(null)
+      setRejectionReason("")
+    } catch (error) {
+      console.error("Error rejecting booking:", error)
+      alert("Failed to reject booking. Please try again.")
+    }
+  }
+
+  const getUserName = (userId) => {
+    if (!userId) return "Unknown User"
+    return users[userId]?.name || "Unknown User"
+  }
+
+  const getTeamName = (teamId) => {
+    if (!teamId) return null
+    return teams[teamId]?.name || "Unknown Team"
   }
 
   const getStatusBadge = (status) => {
@@ -182,7 +247,6 @@ export default function BookingsPage() {
                 <TableRow>
                   <TableHead>Asset</TableHead>
                   <TableHead>Requested By</TableHead>
-                  <TableHead>Department</TableHead>
                   <TableHead>Date Range</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Priority</TableHead>
@@ -190,9 +254,15 @@ export default function BookingsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredBookings.length === 0 ? (
+                {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center">
+                    <TableCell colSpan={6} className="text-center">
+                      Loading booking requests...
+                    </TableCell>
+                  </TableRow>
+                ) : filteredBookings.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center">
                       No booking requests found.
                     </TableCell>
                   </TableRow>
@@ -203,8 +273,14 @@ export default function BookingsPage() {
                         <div className="font-medium">{booking.assetName}</div>
                         <div className="text-sm text-muted-foreground">{booking.assetType}</div>
                       </TableCell>
-                      <TableCell>{booking.requestedBy}</TableCell>
-                      <TableCell>{booking.department}</TableCell>
+                      <TableCell>
+                        <div>{getUserName(booking.requestedBy)}</div>
+                        {booking.requestedByTeam && (
+                          <div className="text-sm text-muted-foreground">
+                            Team: {getTeamName(booking.requestedByTeam)}
+                          </div>
+                        )}
+                      </TableCell>
                       <TableCell>
                         <div>{new Date(booking.startDate).toLocaleDateString()}</div>
                         <div className="text-sm text-muted-foreground">
@@ -240,14 +316,14 @@ export default function BookingsPage() {
                                   <CheckCircle className="mr-2 h-4 w-4 text-green-500" />
                                   Approve
                                 </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => handleRejectBooking(booking.id)}>
+                                <DropdownMenuItem onClick={() => openRejectDialog(booking)}>
                                   <XCircle className="mr-2 h-4 w-4 text-red-500" />
                                   Reject
                                 </DropdownMenuItem>
                               </>
                             )}
                             {booking.status === "Approved" && (
-                              <DropdownMenuItem onClick={() => handleRejectBooking(booking.id)}>
+                              <DropdownMenuItem onClick={() => openRejectDialog(booking)}>
                                 <XCircle className="mr-2 h-4 w-4 text-red-500" />
                                 Cancel Approval
                               </DropdownMenuItem>
@@ -263,6 +339,56 @@ export default function BookingsPage() {
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Reject Booking Dialog */}
+      <Dialog open={isRejectDialogOpen} onOpenChange={setIsRejectDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {currentBooking?.status === "Approved" ? "Cancel Booking" : "Reject Booking Request"}
+            </DialogTitle>
+            <DialogDescription>
+              Please provide a reason for {currentBooking?.status === "Approved" ? "cancellation" : "rejection"}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            {currentBooking && (
+              <>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <div className="text-right font-medium">Asset:</div>
+                  <div className="col-span-3">
+                    {currentBooking.assetName} ({currentBooking.assetType})
+                  </div>
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <div className="text-right font-medium">Requested By:</div>
+                  <div className="col-span-3">
+                    {getUserName(currentBooking.requestedBy)}
+                    {currentBooking.requestedByTeam && ` (Team: ${getTeamName(currentBooking.requestedByTeam)})`}
+                  </div>
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <div className="text-right font-medium">Reason:</div>
+                  <Textarea
+                    className="col-span-3"
+                    placeholder="Provide a reason for rejection..."
+                    value={rejectionReason}
+                    onChange={(e) => setRejectionReason(e.target.value)}
+                  />
+                </div>
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsRejectDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleRejectBooking} disabled={!rejectionReason}>
+              {currentBooking?.status === "Approved" ? "Cancel Booking" : "Reject Request"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

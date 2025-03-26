@@ -25,10 +25,12 @@ export default function LoginPage() {
     setIsLoading(true)
 
     try {
+      console.log("Submitting login for:", email)
       await login(email, password)
+      console.log("Login function completed successfully")
       // Redirect will be handled by the auth context
     } catch (error) {
-      console.error("Login failed:", error)
+      console.error("Login failed in component:", error)
       setError(getAuthErrorMessage(error.code))
     } finally {
       setIsLoading(false)
@@ -94,18 +96,20 @@ export default function LoginPage() {
               />
             </div>
           </CardContent>
-          <CardFooter>
+          <CardFooter className="flex flex-col space-y-4">
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading ? "Logging in..." : "Login"}
             </Button>
+            <div className="flex w-full justify-between">
+              <Link href="/register" className="text-sm text-primary underline-offset-4 hover:underline">
+                Register as Employee
+              </Link>
+              <Link href="/admin-register" className="text-sm text-primary underline-offset-4 hover:underline">
+                Register as Admin
+              </Link>
+            </div>
           </CardFooter>
         </form>
-        <div className="px-8 pb-6 text-center text-sm">
-          Don't have an account?{" "}
-          <Link href="/register" className="text-primary underline-offset-4 hover:underline">
-            Register
-          </Link>
-        </div>
       </Card>
     </div>
   )

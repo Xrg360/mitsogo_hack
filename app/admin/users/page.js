@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -25,100 +25,192 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
 import { MoreHorizontal, Search, FileEdit, Trash2, UserPlus } from "lucide-react"
-
-// Mock data for users
-const initialUsers = [
-  {
-    id: "user-1",
-    name: "John Doe",
-    email: "john.doe@example.com",
-    role: "Admin",
-    department: "IT",
-    status: "Active",
-    joinedDate: "2022-01-15",
-  },
-  {
-    id: "user-2",
-    name: "Sarah Johnson",
-    email: "sarah.johnson@example.com",
-    role: "Employee",
-    department: "Marketing",
-    status: "Active",
-    joinedDate: "2022-02-20",
-  },
-  {
-    id: "user-3",
-    name: "Michael Chen",
-    email: "michael.chen@example.com",
-    role: "Employee",
-    department: "Finance",
-    status: "Active",
-    joinedDate: "2022-03-10",
-  },
-  {
-    id: "user-4",
-    name: "Emily Rodriguez",
-    email: "emily.rodriguez@example.com",
-    role: "Employee",
-    department: "HR",
-    status: "Inactive",
-    joinedDate: "2022-04-05",
-  },
-  {
-    id: "user-5",
-    name: "David Kim",
-    email: "david.kim@example.com",
-    role: "Employee",
-    department: "Sales",
-    status: "Active",
-    joinedDate: "2022-05-12",
-  },
-]
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { AlertCircle } from "lucide-react"
+import { useAuth } from "@/context/auth-context"
+import { collection, getDocs, doc, updateDoc, deleteDoc, query, setDoc } from "firebase/firestore"
+import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth"
+import { db, auth } from "@/lib/firebase"
 
 export default function UsersPage() {
-  const [users, setUsers] = useState(initialUsers)
+  const { user: authUser } = useAuth()
+  const [users, setUsers] = useState([])
   const [searchQuery, setSearchQuery] = useState("")
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [currentUser, setCurrentUser] = useState(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState("")
+  const [departments, setDepartments] = useState([
+    "IT",
+    "HR",
+    "Finance",
+    "Marketing",
+    "Sales",
+    "Operations",
+    "Customer Support",
+    "Other",
+  ])
   const [newUser, setNewUser] = useState({
     name: "",
     email: "",
     role: "Employee",
     department: "",
     status: "Active",
-    joinedDate: new Date().toISOString().split("T")[0],
+    password: "",
+    confirmPassword: "",
   })
+
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const usersQuery = query(collection(db, "users"))
+        const usersSnapshot = await getDocs(usersQuery)
+        const usersData = usersSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+          joinedDate: doc.data().joinedDate || doc.data().createdAt || new Date().toISOString(),
+        }))
+        setUsers(usersData)
+      } catch (error) {
+        console.error("Error fetching users:", error)
+        setError("Failed to load users. Please try again.")
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchUsers()
+  }, [])
 
   const filteredUsers = users.filter(
     (user) =>
-      user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      user.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      user.role.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      user.department.toLowerCase().includes(searchQuery.toLowerCase()),
+      user.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      user.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      user.role?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      user.department?.toLowerCase().includes(searchQuery.toLowerCase()),
   )
 
-  const handleAddUser = () => {
-    const id = `user-${Date.now()}`
-    setUsers([...users, { id, ...newUser }])
-    setNewUser({
-      name: "",
-      email: "",
-      role: "Employee",
-      department: "",
-      status: "Active",
-      joinedDate: new Date().toISOString().split("T")[0],
-    })
-    setIsAddDialogOpen(false)
+  const handleAddUser = async () => {
+    setError("")
+
+    // Validate form
+    if (!newUser.name || !newUser.email || !newUser.department) {
+      setError("Please fill in all required fields")
+      return
+    }
+
+    if (newUser.password !== newUser.confirmPassword) {
+      setError("Passwords do not match")
+      return
+    }
+
+    if (newUser.password && newUser.password.length < 6) {
+      setError("Password must be at least 6 characters")
+      return
+    }
+
+    try {
+      // Create user with Firebase Authentication if password is provided
+      let userId = null
+
+      if (newUser.password) {
+        const userCredential = await createUserWithEmailAndPassword(auth, newUser.email, newUser.password)
+        const firebaseUser = userCredential.user
+
+        // Update profile with display name
+        await updateProfile(firebaseUser, { displayName: newUser.name })
+
+        userId = firebaseUser.uid
+      } else {
+        // Generate a unique ID if not creating auth user
+        userId = `manual-${Date.now()}`
+      }
+
+      // Create user document in Firestore
+      const userData = {
+        name: newUser.name,
+        email: newUser.email,
+        role: newUser.role,
+        department: newUser.department,
+        status: newUser.status,
+        joinedDate: new Date().toISOString(),
+        teams: [],
+        createdBy: authUser?.id,
+        createdAt: new Date().toISOString(),
+      }
+
+      await setDoc(doc(db, "users", userId), userData)
+
+      // Update local state
+      setUsers([...users, { id: userId, ...userData }])
+
+      // Reset form
+      setNewUser({
+        name: "",
+        email: "",
+        role: "Employee",
+        department: "",
+        status: "Active",
+        password: "",
+        confirmPassword: "",
+      })
+
+      setIsAddDialogOpen(false)
+    } catch (error) {
+      console.error("Error adding user:", error)
+      setError(getAuthErrorMessage(error.code) || "Failed to add user. Please try again.")
+    }
   }
 
-  const handleEditUser = () => {
-    setUsers(users.map((user) => (user.id === currentUser.id ? currentUser : user)))
-    setIsEditDialogOpen(false)
+  const handleEditUser = async () => {
+    if (!currentUser) return
+
+    try {
+      // Update user document in Firestore
+      await updateDoc(doc(db, "users", currentUser.id), {
+        name: currentUser.name,
+        role: currentUser.role,
+        department: currentUser.department,
+        status: currentUser.status,
+        updatedBy: authUser?.id,
+        updatedAt: new Date().toISOString(),
+      })
+
+      // Update local state
+      setUsers(users.map((user) => (user.id === currentUser.id ? { ...currentUser } : user)))
+
+      setIsEditDialogOpen(false)
+    } catch (error) {
+      console.error("Error updating user:", error)
+      setError("Failed to update user. Please try again.")
+    }
   }
 
-  const handleDeleteUser = (id) => {
-    setUsers(users.filter((user) => user.id !== id))
+  const handleDeleteUser = async (id) => {
+    if (!confirm("Are you sure you want to delete this user? This action cannot be undone.")) {
+      return
+    }
+
+    try {
+      // Check if user is an auth user (has UID format)
+      const isAuthUser = id.length > 20 && !id.startsWith("manual-")
+
+      if (isAuthUser) {
+        // This would require admin SDK in a real app
+        // For this demo, we'll just delete the Firestore document
+        console.warn("In a production app, you would delete the Firebase Auth user here")
+      }
+
+      // Delete user document from Firestore
+      await deleteDoc(doc(db, "users", id))
+
+      // Update local state
+      setUsers(users.filter((user) => user.id !== id))
+    } catch (error) {
+      console.error("Error deleting user:", error)
+      alert("Failed to delete user. Please try again.")
+    }
   }
 
   const openEditDialog = (user) => {
@@ -134,6 +226,21 @@ export default function UsersPage() {
         return <Badge variant="secondary">Inactive</Badge>
       default:
         return <Badge>{status}</Badge>
+    }
+  }
+
+  const getAuthErrorMessage = (errorCode) => {
+    switch (errorCode) {
+      case "auth/email-already-in-use":
+        return "An account with this email already exists."
+      case "auth/invalid-email":
+        return "Invalid email address format."
+      case "auth/weak-password":
+        return "Password is too weak. Please use a stronger password."
+      case "auth/operation-not-allowed":
+        return "Account creation is currently disabled."
+      default:
+        return "An error occurred. Please try again."
     }
   }
 
@@ -153,6 +260,12 @@ export default function UsersPage() {
               <DialogTitle>Add New User</DialogTitle>
               <DialogDescription>Enter the details of the new user below.</DialogDescription>
             </DialogHeader>
+            {error && (
+              <Alert variant="destructive" className="mt-2">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
             <div className="grid gap-4 py-4">
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="name" className="text-right">
@@ -195,12 +308,21 @@ export default function UsersPage() {
                 <Label htmlFor="department" className="text-right">
                   Department
                 </Label>
-                <Input
-                  id="department"
+                <Select
                   value={newUser.department}
-                  onChange={(e) => setNewUser({ ...newUser, department: e.target.value })}
-                  className="col-span-3"
-                />
+                  onValueChange={(value) => setNewUser({ ...newUser, department: value })}
+                >
+                  <SelectTrigger className="col-span-3">
+                    <SelectValue placeholder="Select department" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {departments.map((dept) => (
+                      <SelectItem key={dept} value={dept}>
+                        {dept}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="status" className="text-right">
@@ -215,6 +337,34 @@ export default function UsersPage() {
                     <SelectItem value="Inactive">Inactive</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="password" className="text-right">
+                  Password
+                </Label>
+                <Input
+                  id="password"
+                  type="password"
+                  value={newUser.password}
+                  onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                  className="col-span-3"
+                />
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="confirmPassword" className="text-right">
+                  Confirm Password
+                </Label>
+                <Input
+                  id="confirmPassword"
+                  type="password"
+                  value={newUser.confirmPassword}
+                  onChange={(e) => setNewUser({ ...newUser, confirmPassword: e.target.value })}
+                  className="col-span-3"
+                />
+              </div>
+              <div className="col-span-4 text-sm text-muted-foreground">
+                Note: Password is optional. If left blank, the user will need to use "Forgot Password" to set their
+                password.
               </div>
             </div>
             <DialogFooter>
@@ -249,7 +399,19 @@ export default function UsersPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredUsers.length === 0 ? (
+            {isLoading ? (
+              <TableRow>
+                <TableCell colSpan={7} className="text-center">
+                  Loading users...
+                </TableCell>
+              </TableRow>
+            ) : error ? (
+              <TableRow>
+                <TableCell colSpan={7} className="text-center text-red-500">
+                  {error}
+                </TableCell>
+              </TableRow>
+            ) : filteredUsers.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} className="text-center">
                   No users found.
@@ -286,7 +448,9 @@ export default function UsersPage() {
                         <DropdownMenuItem
                           onClick={() => {
                             const newStatus = user.status === "Active" ? "Inactive" : "Active"
-                            setUsers(users.map((u) => (u.id === user.id ? { ...u, status: newStatus } : u)))
+                            const updatedUser = { ...user, status: newStatus }
+                            setCurrentUser(updatedUser)
+                            handleEditUser()
                           }}
                         >
                           <Badge className={`mr-2 ${user.status === "Active" ? "bg-secondary" : "bg-green-500"}`}>
@@ -311,6 +475,12 @@ export default function UsersPage() {
             <DialogTitle>Edit User</DialogTitle>
             <DialogDescription>Update the details of the user below.</DialogDescription>
           </DialogHeader>
+          {error && (
+            <Alert variant="destructive" className="mt-2">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
           {currentUser && (
             <div className="grid gap-4 py-4">
               <div className="grid grid-cols-4 items-center gap-4">
@@ -334,7 +504,9 @@ export default function UsersPage() {
                   value={currentUser.email}
                   onChange={(e) => setCurrentUser({ ...currentUser, email: e.target.value })}
                   className="col-span-3"
+                  disabled
                 />
+                <div className="col-span-4 text-xs text-muted-foreground text-right">Email cannot be changed</div>
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="edit-role" className="text-right">
@@ -357,12 +529,21 @@ export default function UsersPage() {
                 <Label htmlFor="edit-department" className="text-right">
                   Department
                 </Label>
-                <Input
-                  id="edit-department"
+                <Select
                   value={currentUser.department}
-                  onChange={(e) => setCurrentUser({ ...currentUser, department: e.target.value })}
-                  className="col-span-3"
-                />
+                  onValueChange={(value) => setCurrentUser({ ...currentUser, department: value })}
+                >
+                  <SelectTrigger className="col-span-3">
+                    <SelectValue placeholder="Select department" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {departments.map((dept) => (
+                      <SelectItem key={dept} value={dept}>
+                        {dept}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="edit-status" className="text-right">

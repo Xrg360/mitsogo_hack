@@ -1,10 +1,9 @@
 "use client"
 
-import { Label } from "@/components/ui/label"
-
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
   Dialog,
@@ -26,69 +25,28 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Search, MoreHorizontal, CheckCircle, AlertTriangle, PenToolIcon as Tool, Plus } from "lucide-react"
-
-// Mock data for maintenance logs
-const initialMaintenanceLogs = [
-  {
-    id: "maint-1",
-    assetName: "HP Projector P3000",
-    assetType: "Projector",
-    reportedBy: "Sarah Johnson",
-    reportDate: "2023-03-10",
-    status: "Pending",
-    issue: "No display output",
-    priority: "High",
-    assignedTo: "IT Support",
-    notes: "Device powers on but no display output. Checked cables and power source.",
-  },
-  {
-    id: "maint-2",
-    assetName: "Dell XPS 15",
-    assetType: "Laptop",
-    reportedBy: "Michael Chen",
-    reportDate: "2023-03-08",
-    status: "In Progress",
-    issue: "Battery not charging",
-    priority: "Medium",
-    assignedTo: "John Smith",
-    notes: "Battery indicator shows plugged in but not charging. Tried different power adapters.",
-  },
-  {
-    id: "maint-3",
-    assetName: "Conference Room A A/C",
-    assetType: "HVAC",
-    reportedBy: "Emily Rodriguez",
-    reportDate: "2023-03-05",
-    status: "Resolved",
-    issue: "Air conditioning not working",
-    priority: "High",
-    assignedTo: "Facilities Team",
-    resolution: "Replaced faulty thermostat and reset system",
-    resolvedDate: "2023-03-07",
-    notes: "Room temperature reaching uncomfortable levels during meetings.",
-  },
-  {
-    id: "maint-4",
-    assetName: "iPad Pro 12.9",
-    assetType: "Tablet",
-    reportedBy: "David Kim",
-    reportDate: "2023-03-12",
-    status: "Pending",
-    issue: "Cracked screen",
-    priority: "Low",
-    assignedTo: null,
-    notes: "Device still functional but screen has a crack in the bottom right corner.",
-  },
-]
+import { Search, MoreHorizontal, CheckCircle, AlertTriangle, PenToolIcon as Tool, Plus, UserPlus } from "lucide-react"
+import { useAuth } from "@/context/auth-context"
+import { collection, query, getDocs, doc, updateDoc, addDoc, orderBy, where } from "firebase/firestore"
+import { db } from "@/lib/firebase"
+import Link from "next/link"
 
 export default function MaintenancePage() {
-  const [maintenanceLogs, setMaintenanceLogs] = useState(initialMaintenanceLogs)
+  const { user } = useAuth()
+  const [maintenanceLogs, setMaintenanceLogs] = useState([])
   const [searchQuery, setSearchQuery] = useState("")
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
   const [isResolveDialogOpen, setIsResolveDialogOpen] = useState(false)
+  const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false)
   const [currentLog, setCurrentLog] = useState(null)
+  const [resolution, setResolution] = useState("")
+  const [isLoading, setIsLoading] = useState(true)
+  const [assets, setAssets] = useState([])
+  const [users, setUsers] = useState({})
+  const [technicians, setTechnicians] = useState([])
+  const [selectedTechnician, setSelectedTechnician] = useState("")
   const [newLog, setNewLog] = useState({
+    assetId: "",
     assetName: "",
     assetType: "",
     reportedBy: "",
@@ -97,65 +55,235 @@ export default function MaintenancePage() {
     assignedTo: "",
     notes: "",
   })
-  const [resolution, setResolution] = useState("")
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        // Fetch maintenance logs
+        const maintenanceQuery = query(collection(db, "maintenance"), orderBy("reportDate", "desc"))
+        const maintenanceSnapshot = await getDocs(maintenanceQuery)
+        const maintenanceData = maintenanceSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }))
+        setMaintenanceLogs(maintenanceData)
+
+        // Fetch assets for the add maintenance form
+        const assetsQuery = query(collection(db, "assets"))
+        const assetsSnapshot = await getDocs(assetsQuery)
+        const assetsData = assetsSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }))
+        setAssets(assetsData)
+
+        // Fetch users for displaying names
+        const usersSnapshot = await getDocs(collection(db, "users"))
+        const usersData = {}
+        usersSnapshot.docs.forEach((doc) => {
+          usersData[doc.id] = doc.data()
+        })
+        setUsers(usersData)
+
+        // Fetch technicians (users with isTechnician flag or role = Technician)
+        const techniciansQuery = query(collection(db, "users"), where("role", "==", "Technician"))
+        const techniciansSnapshot = await getDocs(techniciansQuery)
+        const techniciansData = techniciansSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }))
+        setTechnicians(techniciansData)
+      } catch (error) {
+        console.error("Error fetching maintenance data:", error)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchData()
+  }, [])
 
   const filteredLogs = maintenanceLogs.filter(
     (log) =>
-      log.assetName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      log.assetType.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      log.reportedBy.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      log.issue.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (log.assignedTo && log.assignedTo.toLowerCase().includes(searchQuery.toLowerCase())),
+      log.assetName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      log.assetType?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      getUserName(log.reportedBy)?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      log.issue?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (log.assignedTo && getUserName(log.assignedTo)?.toLowerCase().includes(searchQuery.toLowerCase())),
   )
 
-  const handleAddLog = () => {
-    const id = `maint-${Date.now()}`
-    const reportDate = new Date().toISOString().split("T")[0]
-    setMaintenanceLogs([
-      ...maintenanceLogs,
-      {
-        id,
+  const handleAssetChange = (assetId) => {
+    const selectedAsset = assets.find((asset) => asset.id === assetId)
+    if (selectedAsset) {
+      setNewLog({
         ...newLog,
-        reportDate,
+        assetId,
+        assetName: selectedAsset.name,
+        assetType: selectedAsset.type,
+      })
+    }
+  }
+
+  const handleAddLog = async () => {
+    try {
+      // Create maintenance record
+      const docRef = await addDoc(collection(db, "maintenance"), {
+        ...newLog,
+        reportDate: new Date().toISOString(),
         status: "Pending",
-      },
-    ])
-    setNewLog({
-      assetName: "",
-      assetType: "",
-      reportedBy: "",
-      issue: "",
-      priority: "Medium",
-      assignedTo: "",
-      notes: "",
-    })
-    setIsAddDialogOpen(false)
+        createdBy: user.id,
+      })
+
+      // If the asset exists, update its status
+      if (newLog.assetId) {
+        await updateDoc(doc(db, "assets", newLog.assetId), {
+          status: "Maintenance",
+          condition: "Needs Repair",
+        })
+      }
+
+      const newLogData = {
+        id: docRef.id,
+        ...newLog,
+        reportDate: new Date().toISOString(),
+        status: "Pending",
+        createdBy: user.id,
+      }
+
+      setMaintenanceLogs([newLogData, ...maintenanceLogs])
+
+      setNewLog({
+        assetId: "",
+        assetName: "",
+        assetType: "",
+        reportedBy: "",
+        issue: "",
+        priority: "Medium",
+        assignedTo: "",
+        notes: "",
+      })
+
+      setIsAddDialogOpen(false)
+    } catch (error) {
+      console.error("Error adding maintenance log:", error)
+      alert("Failed to add maintenance log. Please try again.")
+    }
   }
 
-  const handleResolveIssue = () => {
-    const resolvedDate = new Date().toISOString().split("T")[0]
-    setMaintenanceLogs(
-      maintenanceLogs.map((log) =>
-        log.id === currentLog.id ? { ...log, status: "Resolved", resolution, resolvedDate } : log,
-      ),
-    )
-    setResolution("")
-    setIsResolveDialogOpen(false)
-  }
+  const handleStartMaintenance = async (id) => {
+    try {
+      await updateDoc(doc(db, "maintenance", id), {
+        status: "In Progress",
+        startedAt: new Date().toISOString(),
+        startedBy: user.id,
+      })
 
-  const handleStartMaintenance = (id) => {
-    setMaintenanceLogs(maintenanceLogs.map((log) => (log.id === id ? { ...log, status: "In Progress" } : log)))
+      setMaintenanceLogs(maintenanceLogs.map((log) => (log.id === id ? { ...log, status: "In Progress" } : log)))
+    } catch (error) {
+      console.error("Error starting maintenance:", error)
+      alert("Failed to start maintenance. Please try again.")
+    }
   }
 
   const openResolveDialog = (log) => {
     setCurrentLog(log)
+    setResolution("")
     setIsResolveDialogOpen(true)
+  }
+
+  const openAssignDialog = (log) => {
+    setCurrentLog(log)
+    setSelectedTechnician(log.assignedTo || "")
+    setIsAssignDialogOpen(true)
+  }
+
+  const handleAssignTechnician = async () => {
+    if (!currentLog) return
+
+    try {
+      await updateDoc(doc(db, "maintenance", currentLog.id), {
+        assignedTo: selectedTechnician,
+        assignedAt: new Date().toISOString(),
+        assignedBy: user.id,
+        status: currentLog.status === "Pending" ? "Assigned" : currentLog.status,
+      })
+
+      // Update local state
+      setMaintenanceLogs(
+        maintenanceLogs.map((log) =>
+          log.id === currentLog.id
+            ? {
+                ...log,
+                assignedTo: selectedTechnician,
+                assignedAt: new Date().toISOString(),
+                assignedBy: user.id,
+                status: log.status === "Pending" ? "Assigned" : log.status,
+              }
+            : log,
+        ),
+      )
+
+      setIsAssignDialogOpen(false)
+    } catch (error) {
+      console.error("Error assigning technician:", error)
+      alert("Failed to assign technician. Please try again.")
+    }
+  }
+
+  const handleResolveIssue = async () => {
+    if (!currentLog || !resolution) return
+
+    try {
+      // Update maintenance record
+      await updateDoc(doc(db, "maintenance", currentLog.id), {
+        status: "Resolved",
+        resolution,
+        resolvedDate: new Date().toISOString(),
+        resolvedBy: user.id,
+      })
+
+      // If the asset exists, update its status
+      if (currentLog.assetId) {
+        await updateDoc(doc(db, "assets", currentLog.assetId), {
+          status: "Available",
+          condition: "Good",
+        })
+      }
+
+      // Update local state
+      setMaintenanceLogs(
+        maintenanceLogs.map((log) =>
+          log.id === currentLog.id
+            ? {
+                ...log,
+                status: "Resolved",
+                resolution,
+                resolvedDate: new Date().toISOString(),
+                resolvedBy: user.id,
+              }
+            : log,
+        ),
+      )
+
+      setResolution("")
+      setIsResolveDialogOpen(false)
+    } catch (error) {
+      console.error("Error resolving issue:", error)
+      alert("Failed to resolve issue. Please try again.")
+    }
+  }
+
+  const getUserName = (userId) => {
+    if (!userId) return "Unknown User"
+    return users[userId]?.name || "Unknown User"
   }
 
   const getStatusBadge = (status) => {
     switch (status) {
       case "Pending":
         return <Badge className="bg-amber-500">Pending</Badge>
+      case "Assigned":
+        return <Badge className="bg-purple-500">Assigned</Badge>
       case "In Progress":
         return <Badge className="bg-blue-500">In Progress</Badge>
       case "Resolved":
@@ -190,113 +318,143 @@ export default function MaintenancePage() {
     }
   }
 
+  const getTechnicianSpecializations = (technicianId) => {
+    const technician = technicians.find((tech) => tech.id === technicianId)
+    if (!technician || !technician.specializations) return []
+    return technician.specializations
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight">Maintenance & Issues</h1>
-        <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" />
-              Report Issue
+        <div className="flex gap-2">
+          <Link href="/register-technician">
+            <Button variant="outline">
+              <UserPlus className="mr-2 h-4 w-4" />
+              Register Technician
             </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Report Maintenance Issue</DialogTitle>
-              <DialogDescription>Enter the details of the maintenance issue below.</DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-4 py-4">
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="assetName" className="text-right">
-                  Asset Name
-                </Label>
-                <Input
-                  id="assetName"
-                  value={newLog.assetName}
-                  onChange={(e) => setNewLog({ ...newLog, assetName: e.target.value })}
-                  className="col-span-3"
-                />
-              </div>
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="assetType" className="text-right">
-                  Asset Type
-                </Label>
-                <Input
-                  id="assetType"
-                  value={newLog.assetType}
-                  onChange={(e) => setNewLog({ ...newLog, assetType: e.target.value })}
-                  className="col-span-3"
-                />
-              </div>
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="reportedBy" className="text-right">
-                  Reported By
-                </Label>
-                <Input
-                  id="reportedBy"
-                  value={newLog.reportedBy}
-                  onChange={(e) => setNewLog({ ...newLog, reportedBy: e.target.value })}
-                  className="col-span-3"
-                />
-              </div>
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="issue" className="text-right">
-                  Issue
-                </Label>
-                <Input
-                  id="issue"
-                  value={newLog.issue}
-                  onChange={(e) => setNewLog({ ...newLog, issue: e.target.value })}
-                  className="col-span-3"
-                />
-              </div>
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="priority" className="text-right">
-                  Priority
-                </Label>
-                <Select value={newLog.priority} onValueChange={(value) => setNewLog({ ...newLog, priority: value })}>
-                  <SelectTrigger className="col-span-3">
-                    <SelectValue placeholder="Select priority" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="High">High</SelectItem>
-                    <SelectItem value="Medium">Medium</SelectItem>
-                    <SelectItem value="Low">Low</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="assignedTo" className="text-right">
-                  Assign To
-                </Label>
-                <Input
-                  id="assignedTo"
-                  value={newLog.assignedTo}
-                  onChange={(e) => setNewLog({ ...newLog, assignedTo: e.target.value })}
-                  className="col-span-3"
-                />
-              </div>
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="notes" className="text-right">
-                  Notes
-                </Label>
-                <Textarea
-                  id="notes"
-                  value={newLog.notes}
-                  onChange={(e) => setNewLog({ ...newLog, notes: e.target.value })}
-                  className="col-span-3"
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>
-                Cancel
+          </Link>
+          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="mr-2 h-4 w-4" />
+                Report Issue
               </Button>
-              <Button onClick={handleAddLog}>Submit</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Report Maintenance Issue</DialogTitle>
+                <DialogDescription>Enter the details of the maintenance issue below.</DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-4 py-4">
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="assetId" className="text-right">
+                    Asset
+                  </Label>
+                  <Select value={newLog.assetId} onValueChange={handleAssetChange}>
+                    <SelectTrigger className="col-span-3">
+                      <SelectValue placeholder="Select an asset" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {assets.map((asset) => (
+                        <SelectItem key={asset.id} value={asset.id}>
+                          {asset.name} ({asset.type})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="reportedBy" className="text-right">
+                    Reported By
+                  </Label>
+                  <Select
+                    value={newLog.reportedBy}
+                    onValueChange={(value) => setNewLog({ ...newLog, reportedBy: value })}
+                  >
+                    <SelectTrigger className="col-span-3">
+                      <SelectValue placeholder="Select user" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(users).map(([id, userData]) => (
+                        <SelectItem key={id} value={id}>
+                          {userData.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="issue" className="text-right">
+                    Issue
+                  </Label>
+                  <Input
+                    id="issue"
+                    value={newLog.issue}
+                    onChange={(e) => setNewLog({ ...newLog, issue: e.target.value })}
+                    className="col-span-3"
+                  />
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="priority" className="text-right">
+                    Priority
+                  </Label>
+                  <Select value={newLog.priority} onValueChange={(value) => setNewLog({ ...newLog, priority: value })}>
+                    <SelectTrigger className="col-span-3">
+                      <SelectValue placeholder="Select priority" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="High">High</SelectItem>
+                      <SelectItem value="Medium">Medium</SelectItem>
+                      <SelectItem value="Low">Low</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="assignedTo" className="text-right">
+                    Assign To
+                  </Label>
+                  <Select
+                    value={newLog.assignedTo}
+                    onValueChange={(value) => setNewLog({ ...newLog, assignedTo: value })}
+                  >
+                    <SelectTrigger className="col-span-3">
+                      <SelectValue placeholder="Select technician" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="unassigned">Unassigned</SelectItem>
+                      {technicians.map((tech) => (
+                        <SelectItem key={tech.id} value={tech.id}>
+                          {tech.name} ({tech.specializations?.join(", ") || "No specialization"})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="notes" className="text-right">
+                    Notes
+                  </Label>
+                  <Textarea
+                    id="notes"
+                    value={newLog.notes}
+                    onChange={(e) => setNewLog({ ...newLog, notes: e.target.value })}
+                    className="col-span-3"
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleAddLog} disabled={!newLog.assetId || !newLog.issue || !newLog.reportedBy}>
+                  Submit
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
       <div className="flex items-center gap-2">
         <Search className="h-4 w-4 text-muted-foreground" />
@@ -321,7 +479,13 @@ export default function MaintenancePage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredLogs.length === 0 ? (
+            {isLoading ? (
+              <TableRow>
+                <TableCell colSpan={7} className="text-center">
+                  Loading maintenance logs...
+                </TableCell>
+              </TableRow>
+            ) : filteredLogs.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} className="text-center">
                   No maintenance logs found.
@@ -335,10 +499,21 @@ export default function MaintenancePage() {
                     <div className="text-sm text-muted-foreground">{log.assetType}</div>
                   </TableCell>
                   <TableCell>{log.issue}</TableCell>
-                  <TableCell>{log.reportedBy}</TableCell>
+                  <TableCell>{getUserName(log.reportedBy)}</TableCell>
                   <TableCell>{getStatusBadge(log.status)}</TableCell>
                   <TableCell>{getPriorityBadge(log.priority)}</TableCell>
-                  <TableCell>{log.assignedTo || "-"}</TableCell>
+                  <TableCell>
+                    {log.assignedTo ? (
+                      <div>
+                        <div>{getUserName(log.assignedTo)}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {getTechnicianSpecializations(log.assignedTo).join(", ")}
+                        </div>
+                      </div>
+                    ) : (
+                      "-"
+                    )}
+                  </TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -351,20 +526,31 @@ export default function MaintenancePage() {
                         <DropdownMenuLabel>Actions</DropdownMenuLabel>
                         <DropdownMenuItem
                           onClick={() =>
-                            alert(`Notes: ${log.notes}${log.resolution ? `\nResolution: ${log.resolution}` : ""}`)
+                            alert(
+                              `Notes: ${log.notes || "No notes"}${
+                                log.resolution
+                                  ? `
+Resolution: ${log.resolution}`
+                                  : ""
+                              }`,
+                            )
                           }
                         >
                           <AlertTriangle className="mr-2 h-4 w-4" />
                           View Details
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => openAssignDialog(log)}>
+                          <UserPlus className="mr-2 h-4 w-4" />
+                          Assign Technician
+                        </DropdownMenuItem>
                         {log.status === "Pending" && (
                           <DropdownMenuItem onClick={() => handleStartMaintenance(log.id)}>
                             <Tool className="mr-2 h-4 w-4" />
                             Start Maintenance
                           </DropdownMenuItem>
                         )}
-                        {(log.status === "Pending" || log.status === "In Progress") && (
+                        {(log.status === "Pending" || log.status === "In Progress" || log.status === "Assigned") && (
                           <DropdownMenuItem onClick={() => openResolveDialog(log)}>
                             <CheckCircle className="mr-2 h-4 w-4 text-green-500" />
                             Mark as Resolved
@@ -379,6 +565,54 @@ export default function MaintenancePage() {
           </TableBody>
         </Table>
       </div>
+
+      {/* Assign Technician Dialog */}
+      <Dialog open={isAssignDialogOpen} onOpenChange={setIsAssignDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Assign Technician</DialogTitle>
+            <DialogDescription>Select a technician to assign to this maintenance task.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            {currentLog && (
+              <>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label className="text-right font-medium">Asset:</Label>
+                  <div className="col-span-3">{currentLog.assetName}</div>
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label className="text-right font-medium">Issue:</Label>
+                  <div className="col-span-3">{currentLog.issue}</div>
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="technician" className="text-right">
+                    Technician
+                  </Label>
+                  <Select value={selectedTechnician} onValueChange={setSelectedTechnician}>
+                    <SelectTrigger className="col-span-3">
+                      <SelectValue placeholder="Select a technician" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">Unassigned</SelectItem>
+                      {technicians.map((tech) => (
+                        <SelectItem key={tech.id} value={tech.id}>
+                          {tech.name} - {tech.specializations?.join(", ") || "No specialization"}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAssignDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleAssignTechnician}>Assign Technician</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Resolve Issue Dialog */}
       <Dialog open={isResolveDialogOpen} onOpenChange={setIsResolveDialogOpen}>
@@ -417,7 +651,9 @@ export default function MaintenancePage() {
             <Button variant="outline" onClick={() => setIsResolveDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleResolveIssue}>Mark as Resolved</Button>
+            <Button onClick={handleResolveIssue} disabled={!resolution}>
+              Mark as Resolved
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

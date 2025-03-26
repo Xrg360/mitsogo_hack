@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -15,74 +15,180 @@ import {
 } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Search, AlertTriangle } from "lucide-react"
+import { Search, AlertTriangle, Filter } from "lucide-react"
 import { useAuth } from "@/context/auth-context"
-
-// Mock data for my assets
-const initialMyAssets = [
-  {
-    id: "asset-1",
-    name: "Dell XPS 15",
-    type: "Laptop",
-    serialNumber: "XPS-12345",
-    assignedDate: "2023-01-15",
-    dueDate: "2023-04-20",
-    status: "Active",
-    condition: "Good",
-  },
-  {
-    id: "asset-2",
-    name: "iPhone 13 Pro",
-    type: "Mobile Phone",
-    serialNumber: "IP13-67890",
-    assignedDate: "2023-02-10",
-    dueDate: "2023-05-15",
-    status: "Active",
-    condition: "Good",
-  },
-  {
-    id: "asset-3",
-    name: "Logitech MX Master 3",
-    type: "Mouse",
-    serialNumber: "LMX-54321",
-    assignedDate: "2023-01-15",
-    dueDate: "2023-04-20",
-    status: "Active",
-    condition: "Fair",
-  },
-]
+import { collection, query, where, getDocs, addDoc, updateDoc, doc } from "firebase/firestore"
+import { db } from "@/lib/firebase"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Checkbox } from "@/components/ui/checkbox"
 
 export default function MyAssetsPage() {
   const { user } = useAuth()
-  const [myAssets, setMyAssets] = useState(initialMyAssets)
+  const [myAssets, setMyAssets] = useState([])
   const [searchQuery, setSearchQuery] = useState("")
   const [isReportDialogOpen, setIsReportDialogOpen] = useState(false)
   const [selectedAsset, setSelectedAsset] = useState(null)
   const [issueDescription, setIssueDescription] = useState("")
+  const [isLoading, setIsLoading] = useState(true)
+  const [showFilters, setShowFilters] = useState(false)
+  const [filters, setFilters] = useState({
+    types: [],
+    models: [],
+    conditions: [],
+    specifications: [],
+  })
+  const [availableFilters, setAvailableFilters] = useState({
+    types: [],
+    models: [],
+    conditions: ["Good", "Fair", "Needs Repair"],
+    specifications: [],
+  })
 
-  const filteredAssets = myAssets.filter(
-    (asset) =>
-      asset.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      asset.type.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      asset.serialNumber.toLowerCase().includes(searchQuery.toLowerCase()),
-  )
+  useEffect(() => {
+    const fetchMyAssets = async () => {
+      if (!user?.id) return
 
-  const handleReportIssue = () => {
+      try {
+        // Query assets assigned to the user
+        const assetsQuery = query(collection(db, "assets"), where("assignedTo", "==", user.id))
+        const assetsSnapshot = await getDocs(assetsQuery)
+        const assetsData = assetsSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }))
+
+        // Query assets assigned to teams the user belongs to
+        let teamAssetsData = []
+        if (user.teams && user.teams.length > 0) {
+          for (const teamId of user.teams) {
+            const teamAssetsQuery = query(collection(db, "assets"), where("assignedToTeam", "==", teamId))
+            const teamAssetsSnapshot = await getDocs(teamAssetsQuery)
+            const teamAssets = teamAssetsSnapshot.docs.map((doc) => ({
+              id: doc.id,
+              ...doc.data(),
+              isTeamAsset: true,
+              teamId,
+            }))
+            teamAssetsData = [...teamAssetsData, ...teamAssets]
+          }
+        }
+
+        // Combine personal and team assets
+        const allAssets = [...assetsData, ...teamAssetsData]
+        setMyAssets(allAssets)
+
+        // Extract unique values for filters
+        const types = [...new Set(allAssets.map((asset) => asset.type).filter(Boolean))]
+        const models = [...new Set(allAssets.map((asset) => asset.model).filter(Boolean))]
+
+        // Extract all specification keys across all assets
+        const allSpecs = new Set()
+        allAssets.forEach((asset) => {
+          if (asset.specifications) {
+            Object.keys(asset.specifications).forEach((key) => allSpecs.add(key))
+          }
+        })
+
+        setAvailableFilters((prev) => ({
+          ...prev,
+          types,
+          models,
+          specifications: [...allSpecs],
+        }))
+      } catch (error) {
+        console.error("Error fetching assets:", error)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchMyAssets()
+  }, [user])
+
+  const toggleFilter = (category, value) => {
+    setFilters((prev) => {
+      const updated = { ...prev }
+      if (updated[category].includes(value)) {
+        updated[category] = updated[category].filter((item) => item !== value)
+      } else {
+        updated[category] = [...updated[category], value]
+      }
+      return updated
+    })
+  }
+
+  const filteredAssets = myAssets.filter((asset) => {
+    // Search query filter
+    const matchesSearch =
+      asset.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      asset.type?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      asset.model?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      asset.serialNumber?.toLowerCase().includes(searchQuery.toLowerCase())
+
+    if (!matchesSearch) return false
+
+    // Apply category filters
+    if (filters.types.length > 0 && !filters.types.includes(asset.type)) return false
+    if (filters.models.length > 0 && !filters.models.includes(asset.model)) return false
+    if (filters.conditions.length > 0 && !filters.conditions.includes(asset.condition)) return false
+
+    // Specification filters
+    if (filters.specifications.length > 0) {
+      // Check if asset has any of the filtered specifications
+      const assetSpecs = asset.specifications || {}
+      const hasMatchingSpec = filters.specifications.some((spec) => {
+        const [key, value] = spec.split(":")
+        return assetSpecs[key] === value
+      })
+      if (!hasMatchingSpec) return false
+    }
+
+    return true
+  })
+
+  const handleReportIssue = async () => {
     if (!selectedAsset || !issueDescription) {
       alert("Please describe the issue")
       return
     }
 
-    setMyAssets(
-      myAssets.map((asset) =>
-        asset.id === selectedAsset.id
-          ? { ...asset, condition: "Needs Repair", status: "Maintenance Requested" }
-          : asset,
-      ),
-    )
-    setSelectedAsset(null)
-    setIssueDescription("")
-    setIsReportDialogOpen(false)
+    try {
+      // Create maintenance record
+      await addDoc(collection(db, "maintenance"), {
+        assetId: selectedAsset.id,
+        assetName: selectedAsset.name,
+        assetType: selectedAsset.type,
+        reportedBy: user.id,
+        reportedByName: user.name,
+        reportDate: new Date().toISOString(),
+        status: "Pending",
+        issue: issueDescription,
+        priority: "Medium",
+        notes: `Reported by ${user.name}`,
+      })
+
+      // Update asset condition
+      await updateDoc(doc(db, "assets", selectedAsset.id), {
+        condition: "Needs Repair",
+        status: "Maintenance Requested",
+      })
+
+      // Update local state
+      setMyAssets(
+        myAssets.map((asset) =>
+          asset.id === selectedAsset.id
+            ? { ...asset, condition: "Needs Repair", status: "Maintenance Requested" }
+            : asset,
+        ),
+      )
+
+      setSelectedAsset(null)
+      setIssueDescription("")
+      setIsReportDialogOpen(false)
+    } catch (error) {
+      console.error("Error reporting issue:", error)
+      alert("Failed to report issue. Please try again.")
+    }
   }
 
   const openReportDialog = (asset) => {
@@ -93,7 +199,9 @@ export default function MyAssetsPage() {
   const getStatusBadge = (status) => {
     switch (status) {
       case "Active":
+      case "In Use":
         return <Badge className="bg-green-500">Active</Badge>
+      case "Maintenance":
       case "Maintenance Requested":
         return <Badge className="bg-amber-500">Maintenance Requested</Badge>
       default:
@@ -126,6 +234,22 @@ export default function MyAssetsPage() {
     }
   }
 
+  // Extract all specification values for filtering
+  const getSpecificationValues = () => {
+    const specValues = []
+    myAssets.forEach((asset) => {
+      if (asset.specifications) {
+        Object.entries(asset.specifications).forEach(([key, value]) => {
+          const specOption = `${key}:${value}`
+          if (!specValues.includes(specOption)) {
+            specValues.push(specOption)
+          }
+        })
+      }
+    })
+    return specValues
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -139,22 +263,212 @@ export default function MyAssetsPage() {
           <CardDescription>Assets currently in your possession</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center gap-2 mb-4">
-            <Search className="h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search assets..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="max-w-sm"
-            />
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex-1 flex items-center gap-2">
+                <Search className="h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search assets..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="max-w-sm"
+                />
+              </div>
+
+              <Popover open={showFilters} onOpenChange={setShowFilters}>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="flex items-center gap-2">
+                    <Filter className="h-4 w-4" />
+                    Filters
+                    {Object.values(filters).flat().length > 0 && (
+                      <Badge className="ml-1 h-5 w-5 rounded-full p-0 flex items-center justify-center">
+                        {Object.values(filters).flat().length}
+                      </Badge>
+                    )}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-80 max-h-[70vh] overflow-y-auto">
+                  <div className="space-y-4">
+                    <h4 className="font-medium">Filter Assets</h4>
+
+                    {/* Type filter */}
+                    {availableFilters.types.length > 0 && (
+                      <div className="space-y-2">
+                        <h5 className="text-sm font-medium">Asset Type</h5>
+                        <div className="grid grid-cols-2 gap-2">
+                          {availableFilters.types.map((type) => (
+                            <div key={type} className="flex items-center space-x-2">
+                              <Checkbox
+                                id={`type-${type}`}
+                                checked={filters.types.includes(type)}
+                                onCheckedChange={() => toggleFilter("types", type)}
+                              />
+                              <label htmlFor={`type-${type}`} className="text-sm">
+                                {type}
+                              </label>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Model filter */}
+                    {availableFilters.models.length > 0 && (
+                      <div className="space-y-2">
+                        <h5 className="text-sm font-medium">Model</h5>
+                        <div className="grid grid-cols-2 gap-2">
+                          {availableFilters.models.map((model) => (
+                            <div key={model} className="flex items-center space-x-2">
+                              <Checkbox
+                                id={`model-${model}`}
+                                checked={filters.models.includes(model)}
+                                onCheckedChange={() => toggleFilter("models", model)}
+                              />
+                              <label htmlFor={`model-${model}`} className="text-sm">
+                                {model}
+                              </label>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Condition filter */}
+                    <div className="space-y-2">
+                      <h5 className="text-sm font-medium">Condition</h5>
+                      <div className="grid grid-cols-2 gap-2">
+                        {availableFilters.conditions.map((condition) => (
+                          <div key={condition} className="flex items-center space-x-2">
+                            <Checkbox
+                              id={`condition-${condition}`}
+                              checked={filters.conditions.includes(condition)}
+                              onCheckedChange={() => toggleFilter("conditions", condition)}
+                            />
+                            <label htmlFor={`condition-${condition}`} className="text-sm">
+                              {condition}
+                            </label>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Specifications filter */}
+                    {getSpecificationValues().length > 0 && (
+                      <div className="space-y-2">
+                        <h5 className="text-sm font-medium">Specifications</h5>
+                        <div className="grid grid-cols-1 gap-2">
+                          {getSpecificationValues().map((spec) => {
+                            const [key, value] = spec.split(":")
+                            return (
+                              <div key={spec} className="flex items-center space-x-2">
+                                <Checkbox
+                                  id={`spec-${spec}`}
+                                  checked={filters.specifications.includes(spec)}
+                                  onCheckedChange={() => toggleFilter("specifications", spec)}
+                                />
+                                <label htmlFor={`spec-${spec}`} className="text-sm">
+                                  {key}: {value}
+                                </label>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {Object.values(filters).flat().length > 0 && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setFilters({
+                            types: [],
+                            models: [],
+                            conditions: [],
+                            specifications: [],
+                          })
+                        }
+                        className="w-full"
+                      >
+                        Clear All Filters
+                      </Button>
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+
+            {Object.values(filters).flat().length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {filters.types.map((type) => (
+                  <Badge key={`badge-type-${type}`} variant="outline" className="flex items-center gap-1">
+                    Type: {type}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => toggleFilter("types", type)}
+                      className="h-4 w-4 p-0 ml-1"
+                    >
+                      ×
+                    </Button>
+                  </Badge>
+                ))}
+
+                {filters.models.map((model) => (
+                  <Badge key={`badge-model-${model}`} variant="outline" className="flex items-center gap-1">
+                    Model: {model}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => toggleFilter("models", model)}
+                      className="h-4 w-4 p-0 ml-1"
+                    >
+                      ×
+                    </Button>
+                  </Badge>
+                ))}
+
+                {filters.conditions.map((condition) => (
+                  <Badge key={`badge-condition-${condition}`} variant="outline" className="flex items-center gap-1">
+                    Condition: {condition}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => toggleFilter("conditions", condition)}
+                      className="h-4 w-4 p-0 ml-1"
+                    >
+                      ×
+                    </Button>
+                  </Badge>
+                ))}
+
+                {filters.specifications.map((spec) => {
+                  const [key, value] = spec.split(":")
+                  return (
+                    <Badge key={`badge-spec-${spec}`} variant="outline" className="flex items-center gap-1">
+                      {key}: {value}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => toggleFilter("specifications", spec)}
+                        className="h-4 w-4 p-0 ml-1"
+                      >
+                        ×
+                      </Button>
+                    </Badge>
+                  )
+                })}
+              </div>
+            )}
           </div>
-          <div className="rounded-md border">
+
+          <div className="rounded-md border mt-4">
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Asset</TableHead>
+                  <TableHead>Specifications</TableHead>
                   <TableHead>Serial Number</TableHead>
-                  <TableHead>Assigned Date</TableHead>
                   <TableHead>Due Date</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Condition</TableHead>
@@ -162,7 +476,13 @@ export default function MyAssetsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredAssets.length === 0 ? (
+                {isLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center">
+                      Loading assets...
+                    </TableCell>
+                  </TableRow>
+                ) : filteredAssets.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={7} className="text-center">
                       No assets found.
@@ -173,15 +493,34 @@ export default function MyAssetsPage() {
                     <TableRow key={asset.id}>
                       <TableCell>
                         <div className="font-medium">{asset.name}</div>
-                        <div className="text-sm text-muted-foreground">{asset.type}</div>
+                        <div className="text-sm text-muted-foreground">
+                          {asset.type} {asset.model ? `- ${asset.model}` : ""}
+                        </div>
+                        {asset.isTeamAsset && (
+                          <Badge variant="outline" className="mt-1">
+                            Team Asset
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {asset.specifications && Object.keys(asset.specifications).length > 0 ? (
+                          <div className="text-xs">
+                            {Object.entries(asset.specifications).map(([key, value]) => (
+                              <div key={key}>
+                                <span className="font-medium">{key}:</span> {value}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">No specifications</span>
+                        )}
                       </TableCell>
                       <TableCell>{asset.serialNumber}</TableCell>
-                      <TableCell>{new Date(asset.assignedDate).toLocaleDateString()}</TableCell>
-                      <TableCell>{new Date(asset.dueDate).toLocaleDateString()}</TableCell>
+                      <TableCell>{asset.dueDate ? new Date(asset.dueDate).toLocaleDateString() : "N/A"}</TableCell>
                       <TableCell>{getStatusBadge(asset.status)}</TableCell>
                       <TableCell>{getConditionBadge(asset.condition)}</TableCell>
                       <TableCell className="text-right">
-                        {asset.condition !== "Needs Repair" && (
+                        {asset.condition !== "Needs Repair" && !asset.isTeamAsset && (
                           <Button variant="outline" size="sm" onClick={() => openReportDialog(asset)}>
                             <AlertTriangle className="mr-2 h-4 w-4" />
                             Report Issue
@@ -210,7 +549,9 @@ export default function MyAssetsPage() {
                 <div className="text-right font-medium">Asset:</div>
                 <div className="col-span-3">
                   <div>{selectedAsset.name}</div>
-                  <div className="text-sm text-muted-foreground">{selectedAsset.type}</div>
+                  <div className="text-sm text-muted-foreground">
+                    {selectedAsset.type} {selectedAsset.model ? `- ${selectedAsset.model}` : ""}
+                  </div>
                 </div>
               </div>
             )}
